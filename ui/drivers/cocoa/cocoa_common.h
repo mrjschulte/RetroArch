@@ -60,8 +60,12 @@ typedef struct
 } apple_frontend_settings_t;
 extern apple_frontend_settings_t apple_frontend_settings;
 
+#if TARGET_OS_IOS
 @interface CocoaView : UIViewController<CLLocationManagerDelegate,
 AVCaptureAudioDataOutputSampleBufferDelegate>
+#elif TARGET_OS_TV
+@interface CocoaView : UIViewController
+#endif
 + (CocoaView*)get;
 @end
 

@@ -152,7 +152,7 @@ void *glkitview_init(void);
     [self setNeedsDisplay: YES];
 }
 
-#elif defined(HAVE_COCOATOUCH)
+#elif TARGET_OS_IOS
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures
 {
     return UIRectEdgeBottom;
