@@ -43,6 +43,11 @@
 #include "../../../location/location_driver.h"
 #include "../../../camera/camera_driver.h"
 
+#ifdef HAVE_COCOATOUCH
+#import "GCDWebUploader.h"
+#import "WebServer.h"
+#endif
+
 static CocoaView* g_instance;
 
 #if defined(HAVE_COCOA)
@@ -55,6 +60,13 @@ void *nsview_get_ptr(void)
 /* forward declarations */
 void cocoagl_gfx_ctx_update(void);
 void *glkitview_init(void);
+
+#ifdef HAVE_COCOATOUCH
+@interface CocoaView()<GCDWebUploaderDelegate> {
+    
+}
+@end
+#endif
 
 @implementation CocoaView
 
@@ -164,15 +176,6 @@ void *glkitview_init(void);
     return NO;
 }
 
-- (void)viewDidAppear:(BOOL)animated
-{
-   /* Pause Menus. */
-   [self showPauseIndicator];
-   if (@available(iOS 11.0, *)) {
-        [self setNeedsUpdateOfHomeIndicatorAutoHidden];
-   }
-}
-
 -(void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
     if (@available(iOS 11, *)) {
@@ -273,6 +276,59 @@ void *glkitview_init(void);
    return YES;
 }
 #endif
+
+#ifdef HAVE_COCOATOUCH
+- (void)viewDidAppear:(BOOL)animated
+{
+#if TARGET_OS_IOS
+    /* Pause Menus. */
+    [self showPauseIndicator];
+    if (@available(iOS 11.0, *)) {
+        [self setNeedsUpdateOfHomeIndicatorAutoHidden];
+    }
+#elif TARGET_OS_TV
+    
+#endif
+}
+
+-(void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+#if TARGET_OS_TV
+    [[WebServer sharedInstance] startUploader];
+    [WebServer sharedInstance].webUploader.delegate = self;
+#endif
+}
+
+#pragma mark GCDWebServerDelegate
+- (void)webServerDidCompleteBonjourRegistration:(GCDWebServer*)server {
+    NSMutableString *servers = [[NSMutableString alloc] init];
+    if ( server.serverURL != nil ) {
+        [servers appendString:[NSString stringWithFormat:@"%@",server.serverURL]];
+    }
+    if ( servers.length > 0 ) {
+        [servers appendString:@"\n\n"];
+    }
+    if ( server.bonjourServerURL != nil ) {
+        [servers appendString:[NSString stringWithFormat:@"%@",server.bonjourServerURL]];
+    }
+#if TARGET_OS_TV
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Web Server Started" message:[NSString stringWithFormat:@"To transfer files from your computer, go to one of these addresses on your web browser:\n\n%@",servers] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+    }]];
+    [self presentViewController:alert animated:YES completion:^{
+    }];
+#elif TARGET_OS_IOS
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Web Server Started" message:[NSString stringWithFormat:@"To transfer ROMs from your computer, go to one of these addresses on your web browser:\n\n%@",servers] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Stop Server" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        isPresentingAlert = NO;
+        [[WebServer sharedInstance] webUploader].delegate = nil;
+        [[WebServer sharedInstance] stopUploader];
+    }]];
+    [self presentViewController:alert animated:YES completion:^{
+    }];
+#endif
+}
+#endif  // end HAVE_COCOATOUCH
 
 #ifdef HAVE_AVFOUNDATION
 #include "../../gfx/common/gl_common.h"
