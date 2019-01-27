@@ -338,7 +338,12 @@ enum
 
 -(NSString*)documentsDirectory {
     if ( _documentsDirectory == nil ) {
+#if TARGET_OS_IOS       
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+#elif TARGET_OS_TV
+        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+#endif        
+        
         _documentsDirectory = paths.firstObject;
     }
     return _documentsDirectory;
