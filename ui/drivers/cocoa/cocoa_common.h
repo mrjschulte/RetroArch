@@ -39,7 +39,6 @@
 #import <AVFoundation/AVCaptureOutput.h>
 #endif
 
-
 /*********************************************/
 /* RAMenuBase                                */
 /* A menu class that displays RAMenuItemBase */

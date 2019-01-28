@@ -3,7 +3,7 @@
  *  Copyright (C) 2011-2017 - Daniel De Matteis
  *  Copyright (C) 2014-2017 - Jean-André Santoni
  *  Copyright (C) 2015-2017 - Andrés Suárez
- *  Copyright (C) 2016-2017 - Brad Parker
+ *  Copyright (C) 2016-2019 - Brad Parker
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -50,11 +50,16 @@
 #include "verbosity.h"
 #include "lakka.h"
 
+#include "tasks/task_content.h"
 #include "tasks/tasks_internal.h"
 
 #include "../list_special.h"
 
 #include "record/record_driver.h"
+
+#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
+#include "uwp/uwp_func.h"
+#endif
 
 static const char* invalid_filename_chars[] = {
    /* https://support.microsoft.com/en-us/help/905231/information-about-the-characters-that-you-cannot-use-in-site-names--fo */
@@ -214,6 +219,7 @@ enum input_driver_enum
    INPUT_X,
    INPUT_WAYLAND,
    INPUT_DINPUT,
+   INPUT_PS4,
    INPUT_PS3,
    INPUT_PSP,
    INPUT_PS2,
@@ -223,6 +229,7 @@ enum input_driver_enum
    INPUT_WII,
    INPUT_WIIU,
    INPUT_XINPUT,
+   INPUT_UWP,
    INPUT_UDEV,
    INPUT_LINUXRAW,
    INPUT_COCOA,
@@ -239,6 +246,7 @@ enum joypad_driver_enum
    JOYPAD_GX,
    JOYPAD_WIIU,
    JOYPAD_XDK,
+   JOYPAD_PS4,
    JOYPAD_PSP,
    JOYPAD_PS2,
    JOYPAD_CTR,
@@ -319,6 +327,13 @@ static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_WII;
 static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_WIIU;
 #elif defined(XENON)
 static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_XENON360;
+#elif defined(HAVE_D3D12) && false
+/* FIXME: DX12 performance on Xbox is horrible for some reason, so use d3d11 as default */
+static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_D3D12;
+#elif defined(HAVE_D3D11)
+static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_D3D11;
+#elif defined(HAVE_D3D10)
+static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_D3D10;
 #elif defined(HAVE_D3D9)
 static enum video_driver_enum VIDEO_DEFAULT_DRIVER = VIDEO_D3D9;
 #elif defined(HAVE_D3D8)
@@ -359,7 +374,7 @@ static enum audio_driver_enum AUDIO_DEFAULT_DRIVER = AUDIO_XENON360;
 static enum audio_driver_enum AUDIO_DEFAULT_DRIVER = AUDIO_WII;
 #elif defined(WIIU)
 static enum audio_driver_enum AUDIO_DEFAULT_DRIVER = AUDIO_WIIU;
-#elif defined(PSP) || defined(VITA)
+#elif defined(PSP) || defined(VITA) || defined(ORBIS)
 static enum audio_driver_enum AUDIO_DEFAULT_DRIVER = AUDIO_PSP;
 #elif defined(PS2)
 static enum audio_driver_enum AUDIO_DEFAULT_DRIVER = AUDIO_PS2;
@@ -427,7 +442,9 @@ static enum midi_driver_enum MIDI_DEFAULT_DRIVER = MIDI_ALSA;
 static enum midi_driver_enum MIDI_DEFAULT_DRIVER = MIDI_NULL;
 #endif
 
-#if defined(XENON)
+#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
+static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_UWP;
+#elif defined(XENON)
 static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_XENON360;
 #elif defined(_XBOX360) || defined(_XBOX) || defined(HAVE_XINPUT2) || defined(HAVE_XINPUT_XBOX1)
 static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_XINPUT;
@@ -439,6 +456,8 @@ static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_SDL2;
 static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_RWEBINPUT;
 #elif defined(_WIN32)
 static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_DINPUT;
+#elif defined(ORBIS)
+static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_PS4;
 #elif defined(__CELLOS_LV2__)
 static enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_PS3;
 #elif defined(PSP) || defined(VITA)
@@ -485,6 +504,8 @@ static enum joypad_driver_enum JOYPAD_DEFAULT_DRIVER = JOYPAD_GX;
 static enum joypad_driver_enum JOYPAD_DEFAULT_DRIVER = JOYPAD_WIIU;
 #elif defined(_XBOX)
 static enum joypad_driver_enum JOYPAD_DEFAULT_DRIVER = JOYPAD_XDK;
+#elif defined(ORBIS)
+static enum joypad_driver_enum JOYPAD_DEFAULT_DRIVER = JOYPAD_PS4;
 #elif defined(PSP) || defined(VITA)
 static enum joypad_driver_enum JOYPAD_DEFAULT_DRIVER = JOYPAD_PSP;
 #elif defined(PS2)
@@ -673,8 +694,10 @@ const char *config_get_default_audio(void)
       case AUDIO_WIIU:
          return "AX";
       case AUDIO_PSP:
-#ifdef VITA
+#if defined(VITA)
          return "vita";
+#elif defined(ORBIS)
+         return "orbis";
 #else
          return "psp";
 #endif
@@ -829,6 +852,8 @@ const char *config_get_default_input(void)
    {
       case INPUT_ANDROID:
          return "android";
+      case INPUT_PS4:
+         return "ps4";
       case INPUT_PS3:
          return "ps3";
       case INPUT_PSP:
@@ -857,6 +882,8 @@ const char *config_get_default_input(void)
          return "xenon360";
       case INPUT_XINPUT:
          return "xinput";
+      case INPUT_UWP:
+         return "uwp";
       case INPUT_WII:
          return "gx";
       case INPUT_WIIU:
@@ -893,6 +920,8 @@ const char *config_get_default_joypad(void)
 
    switch (default_driver)
    {
+      case JOYPAD_PS4:
+         return "ps4";
       case JOYPAD_PS3:
          return "ps3";
       case JOYPAD_XINPUT:
@@ -945,7 +974,6 @@ const char *config_get_default_joypad(void)
 
    return "null";
 }
-
 
 /**
  * config_get_default_camera:
@@ -1106,6 +1134,9 @@ static struct config_array_setting *populate_settings_array(settings_t *settings
    unsigned count                        = 0;
    struct config_array_setting  *tmp    = (struct config_array_setting*)calloc(1, (*size + 1) * sizeof(struct config_array_setting));
 
+   if (!tmp)
+      return NULL;
+
    /* Arrays */
    SETTING_ARRAY("playlist_names",           settings->arrays.playlist_names, false, NULL, true);
    SETTING_ARRAY("playlist_cores",           settings->arrays.playlist_cores, false, NULL, true);
@@ -1150,6 +1181,9 @@ static struct config_path_setting *populate_settings_path(settings_t *settings, 
    unsigned count = 0;
    global_t   *global                  = global_get_ptr();
    struct config_path_setting  *tmp    = (struct config_path_setting*)calloc(1, (*size + 1) * sizeof(struct config_path_setting));
+
+   if (!tmp)
+      return NULL;
 
    /* Paths */
 #ifdef HAVE_XMB
@@ -1361,7 +1395,11 @@ static struct config_bool_setting *populate_settings_bool(settings_t *settings, 
    SETTING_BOOL("keyboard_gamepad_enable",       &settings->bools.input_keyboard_gamepad_enable, true, true, false);
    SETTING_BOOL("core_set_supports_no_game_enable", &settings->bools.set_supports_no_game_enable, true, true, false);
    SETTING_BOOL("audio_enable",                  &settings->bools.audio_enable, true, audio_enable, false);
-   SETTING_BOOL("audio_enable_menu",             &settings->bools.audio_enable_menu, true, false, false);
+   SETTING_BOOL("audio_enable_menu",             &settings->bools.audio_enable_menu, true, audio_enable_menu, false);
+   SETTING_BOOL("audio_enable_menu_ok",          &settings->bools.audio_enable_menu_ok, true, audio_enable_menu_ok, false);
+   SETTING_BOOL("audio_enable_menu_cancel",      &settings->bools.audio_enable_menu_cancel, true, audio_enable_menu_cancel, false);
+   SETTING_BOOL("audio_enable_menu_notice",      &settings->bools.audio_enable_menu_notice, true, audio_enable_menu_notice, false);
+   SETTING_BOOL("audio_enable_menu_bgm",         &settings->bools.audio_enable_menu_bgm, true, audio_enable_menu_bgm, false);
    SETTING_BOOL("audio_mute_enable",             audio_get_bool_ptr(AUDIO_ACTION_MUTE_ENABLE), true, false, false);
    SETTING_BOOL("audio_mixer_mute_enable",       audio_get_bool_ptr(AUDIO_ACTION_MIXER_MUTE_ENABLE), true, false, false);
    SETTING_BOOL("location_allow",                &settings->bools.location_allow, true, false, false);
@@ -1379,11 +1417,11 @@ static struct config_bool_setting *populate_settings_bool(settings_t *settings, 
 #ifdef GEKKO
    SETTING_BOOL("video_vfilter",                 &settings->bools.video_vfilter, true, video_vfilter, false);
 #endif
-#ifdef HAVE_MENU
-   SETTING_BOOL("menu_unified_controls",         &settings->bools.menu_unified_controls, true, false, false);
 #ifdef HAVE_THREADS
    SETTING_BOOL("threaded_data_runloop_enable",  &settings->bools.threaded_data_runloop_enable, true, threaded_data_runloop_enable, false);
 #endif
+#ifdef HAVE_MENU
+   SETTING_BOOL("menu_unified_controls",         &settings->bools.menu_unified_controls, true, false, false);
    SETTING_BOOL("menu_throttle_framerate",       &settings->bools.menu_throttle_framerate, true, true, false);
    SETTING_BOOL("menu_linear_filter",            &settings->bools.menu_linear_filter, true, true, false);
    SETTING_BOOL("menu_horizontal_animation",     &settings->bools.menu_horizontal_animation, true, true, false);
@@ -1402,6 +1440,9 @@ static struct config_bool_setting *populate_settings_bool(settings_t *settings, 
    SETTING_BOOL("quick_menu_show_save_load_state",      &settings->bools.quick_menu_show_save_load_state, true, quick_menu_show_save_load_state, false);
    SETTING_BOOL("quick_menu_show_undo_save_load_state", &settings->bools.quick_menu_show_undo_save_load_state, true, quick_menu_show_undo_save_load_state, false);
    SETTING_BOOL("quick_menu_show_add_to_favorites",     &settings->bools.quick_menu_show_add_to_favorites, true, quick_menu_show_add_to_favorites, false);
+   SETTING_BOOL("quick_menu_show_start_recording",      &settings->bools.quick_menu_show_start_recording, true, quick_menu_show_start_recording, false);
+   SETTING_BOOL("quick_menu_show_start_streaming",      &settings->bools.quick_menu_show_start_streaming, true, quick_menu_show_start_streaming, false);
+   SETTING_BOOL("quick_menu_show_reset_core_association", &settings->bools.quick_menu_show_reset_core_association, true, quick_menu_show_reset_core_association, false);
    SETTING_BOOL("quick_menu_show_options",       &settings->bools.quick_menu_show_options, true, quick_menu_show_options, false);
    SETTING_BOOL("quick_menu_show_controls",      &settings->bools.quick_menu_show_controls, true, quick_menu_show_controls, false);
    SETTING_BOOL("quick_menu_show_cheats",        &settings->bools.quick_menu_show_cheats, true, quick_menu_show_cheats, false);
@@ -1526,6 +1567,8 @@ static struct config_bool_setting *populate_settings_bool(settings_t *settings, 
    SETTING_BOOL("video_3ds_lcd_bottom",          &settings->bools.video_3ds_lcd_bottom, true, video_3ds_lcd_bottom, false);
 #endif
 
+   SETTING_BOOL("playlist_use_old_format",       &settings->bools.playlist_use_old_format, true, playlist_use_old_format, false);
+
    *size = count;
 
    return tmp;
@@ -1535,6 +1578,9 @@ static struct config_float_setting *populate_settings_float(settings_t *settings
 {
    unsigned count = 0;
    struct config_float_setting  *tmp      = (struct config_float_setting*)calloc(1, (*size + 1) * sizeof(struct config_float_setting));
+
+   if (!tmp)
+      return NULL;
 
    SETTING_FLOAT("video_aspect_ratio",       &settings->floats.video_aspect_ratio, true, aspect_ratio, false);
    SETTING_FLOAT("video_scale",              &settings->floats.video_scale, false, 0.0f, false);
@@ -1572,6 +1618,9 @@ static struct config_uint_setting *populate_settings_uint(settings_t *settings, 
    unsigned count                     = 0;
    struct config_uint_setting  *tmp   = (struct config_uint_setting*)malloc((*size + 1) * sizeof(struct config_uint_setting));
 
+   if (!tmp)
+      return NULL;
+
 #ifdef HAVE_NETWORKING
    SETTING_UINT("streaming_mode",  		         &settings->uints.streaming_mode, true, STREAMING_MODE_TWITCH, false);
 #endif
@@ -1608,6 +1657,8 @@ static struct config_uint_setting *populate_settings_uint(settings_t *settings, 
    SETTING_UINT("dpi_override_value",           &settings->uints.menu_dpi_override_value, true, menu_dpi_override_value, false);
    SETTING_UINT("menu_thumbnails",              &settings->uints.menu_thumbnails, true, menu_thumbnails_default, false);
    SETTING_UINT("menu_timedate_style", &settings->uints.menu_timedate_style, true, menu_timedate_style, false);
+   SETTING_UINT("rgui_menu_color_theme",        &settings->uints.menu_rgui_color_theme, true, rgui_color_theme, false);
+   SETTING_UINT("rgui_thumbnail_downscaler",    &settings->uints.menu_rgui_thumbnail_downscaler, true, rgui_thumbnail_downscaler, false);
 #ifdef HAVE_LIBNX
    SETTING_UINT("split_joycon_p1", &settings->uints.input_split_joycon[0], true, 0, false);
    SETTING_UINT("split_joycon_p2", &settings->uints.input_split_joycon[1], true, 0, false);
@@ -1696,6 +1747,9 @@ static struct config_size_setting *populate_settings_size(settings_t *settings, 
    unsigned count                     = 0;
    struct config_size_setting  *tmp   = (struct config_size_setting*)calloc((*size + 1), sizeof(struct config_size_setting));
 
+   if (!tmp)
+      return NULL;
+
    SETTING_SIZE("rewind_buffer_size",           &settings->sizes.rewind_buffer_size, true, rewind_buffer_size, false);
 
    *size = count;
@@ -1707,6 +1761,9 @@ static struct config_int_setting *populate_settings_int(settings_t *settings, in
 {
    unsigned count                     = 0;
    struct config_int_setting  *tmp    = (struct config_int_setting*)calloc((*size + 1), sizeof(struct config_int_setting));
+
+   if (!tmp)
+      return NULL;
 
    SETTING_INT("state_slot",                   &settings->ints.state_slot, false, 0 /* TODO */, false);
 #ifdef HAVE_NETWORKING
@@ -1911,6 +1968,10 @@ void config_set_defaults(void)
    settings->uints.menu_entry_normal_color     = menu_entry_normal_color;
    settings->uints.menu_entry_hover_color      = menu_entry_hover_color;
    settings->uints.menu_title_color            = menu_title_color;
+   settings->uints.menu_bg_dark_color          = menu_bg_dark_color;
+   settings->uints.menu_bg_light_color         = menu_bg_light_color;
+   settings->uints.menu_border_dark_color      = menu_border_dark_color;
+   settings->uints.menu_border_light_color     = menu_border_light_color;
 #endif
 
 #ifdef HAVE_CHEEVOS
@@ -1944,7 +2005,7 @@ void config_set_defaults(void)
    for (i = 0; i < MAX_USERS; i++)
    {
       settings->uints.input_joypad_map[i] = i;
-#ifdef SWITCH // Switch prefered default dpad mode
+#ifdef SWITCH /* Switch prefered default dpad mode */
       settings->uints.input_analog_dpad_mode[i] = ANALOG_DPAD_LSTICK;
 #else
       settings->uints.input_analog_dpad_mode[i] = ANALOG_DPAD_NONE;
@@ -2214,8 +2275,13 @@ static config_file_t *open_default_config_file(void)
 
    (void)path_size;
 
-#if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
-   fill_pathname_application_path(app_path, path_size);
+#if defined(_WIN32) && !defined(_XBOX)
+#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
+   /* On UWP, the app install directory is not writable so use the writable LocalState dir instead */
+   fill_pathname_home_dir(app_path, path_size);
+#else
+   fill_pathname_application_dir(app_path, path_size);
+#endif
    fill_pathname_resolve_relative(conf_path, app_path,
          file_path_str(FILE_PATH_MAIN_CONFIG), path_size);
 
@@ -2239,7 +2305,6 @@ static config_file_t *open_default_config_file(void)
       /* Try to create a new config file. */
       conf = config_file_new(NULL);
 
-
       if (conf)
       {
          /* Since this is a clean config file, we can
@@ -2247,7 +2312,7 @@ static config_file_t *open_default_config_file(void)
          fill_pathname_resolve_relative(conf_path, app_path,
                file_path_str(FILE_PATH_MAIN_CONFIG), path_size);
          config_set_bool(conf, "config_save_on_exit", true);
-         saved = config_file_write(conf, conf_path);
+         saved = config_file_write(conf, conf_path, true);
       }
 
       if (!saved)
@@ -2283,7 +2348,7 @@ static config_file_t *open_default_config_file(void)
       if (conf)
       {
          config_set_bool(conf, "config_save_on_exit", true);
-         saved = config_file_write(conf, conf_path);
+         saved = config_file_write(conf, conf_path, true);
       }
 
       if (!saved)
@@ -2358,7 +2423,7 @@ static config_file_t *open_default_config_file(void)
          {
             /* Since this is a clean config file, we can safely use config_save_on_exit. */
             config_set_bool(conf, "config_save_on_exit", true);
-            saved = config_file_write(conf, conf_path);
+            saved = config_file_write(conf, conf_path, true);
          }
 
          if (!saved)
@@ -2605,7 +2670,6 @@ static void config_get_hex_base(config_file_t *conf,
 }
 #endif
 
-
 /**
  * config_load:
  * @path                : path to be read from.
@@ -2680,11 +2744,11 @@ static bool config_load_file(const char *path, bool set_defaults,
 
       while (extra_path)
       {
-         bool ret = config_append_file(conf, extra_path);
+         bool result = config_append_file(conf, extra_path);
 
          RARCH_LOG("Config: appending config \"%s\"\n", extra_path);
 
-         if (!ret)
+         if (!result)
             RARCH_ERR("Config: failed to append config \"%s\"\n", extra_path);
          extra_path = strtok_r(NULL, "|", &save);
       }
@@ -2812,7 +2876,6 @@ static bool config_load_file(const char *path, bool set_defaults,
       CONFIG_GET_INT_BASE(conf, settings, uints.led_map[i], buf);
    }
 
-
    /* Hexadecimal settings  */
 
    if (config_get_hex(conf, "video_message_color", &msg_color))
@@ -2828,6 +2891,14 @@ static bool config_load_file(const char *path, bool set_defaults,
          &settings->uints.menu_entry_hover_color);
    config_get_hex_base(conf, "menu_title_color",
          &settings->uints.menu_title_color);
+   config_get_hex_base(conf, "menu_bg_dark_color",
+         &settings->uints.menu_bg_dark_color);
+   config_get_hex_base(conf, "menu_bg_light_color",
+         &settings->uints.menu_bg_light_color);
+   config_get_hex_base(conf, "menu_border_dark_color",
+         &settings->uints.menu_border_dark_color);
+   config_get_hex_base(conf, "menu_border_light_color",
+         &settings->uints.menu_border_light_color);
 #endif
 
    /* Float settings */
@@ -2988,7 +3059,6 @@ static bool config_load_file(const char *path, bool set_defaults,
       }
    }
 
-
    if (!string_is_empty(settings->paths.directory_screenshot))
    {
       if (string_is_equal(settings->paths.directory_screenshot, "default"))
@@ -3054,7 +3124,6 @@ static bool config_load_file(const char *path, bool set_defaults,
     * and up (with 0 being skipped) */
    if (settings->floats.fastforward_ratio < 0.0f)
       configuration_set_float(settings, settings->floats.fastforward_ratio, 0.0f);
-
 
 #ifdef HAVE_LAKKA
    settings->bools.ssh_enable       = filestream_exists(LAKKA_SSH_PATH);
@@ -3150,7 +3219,6 @@ static bool config_load_file(const char *path, bool set_defaults,
    recording_driver_update_streaming_url();
 
    ret = true;
-
 
 end:
    if (conf)
@@ -3462,7 +3530,6 @@ bool config_load_remap(void)
       malloc(PATH_MAX_LENGTH * sizeof(char));
    remap_directory[0] = core_path[0] = game_path[0] = '\0';
 
-
    strlcpy(remap_directory,
          settings->paths.directory_input_remapping,
          path_size);
@@ -3528,7 +3595,6 @@ bool config_load_remap(void)
       RARCH_LOG("Remaps: no content-dir-specific remap found at %s.\n", content_path);
       input_remapping_set_defaults(false);
    }
-
 
    /* Create a new config file from core_path */
    new_conf = config_file_new(core_path);
@@ -3754,8 +3820,6 @@ static void parse_config_file(void)
    RARCH_ERR("[Config]: couldn't find config at path: \"%s\"\n",
          path_get(RARCH_PATH_CONFIG));
 }
-
-
 
 static void save_keybind_key(config_file_t *conf, const char *prefix,
       const char *base, const struct retro_keybind *bind)
@@ -4010,12 +4074,11 @@ static bool config_save_keybinds_file(const char *path)
    for (i = 0; i < MAX_USERS; i++)
       save_keybinds_user(conf, i);
 
-   ret = config_file_write(conf, path);
+   ret = config_file_write(conf, path, true);
    config_file_free(conf);
    return ret;
 }
 #endif
-
 
 /**
  * config_save_autoconf_profile:
@@ -4119,7 +4182,7 @@ bool config_save_autoconf_profile(const char *path, unsigned user)
             &input_config_binds[user][i], false, false);
    }
 
-   ret = config_file_write(conf, autoconf_file);
+   ret = config_file_write(conf, autoconf_file, false);
 
    config_file_free(conf);
    free(buf);
@@ -4133,7 +4196,6 @@ error:
    free(path_new);
    return false;
 }
-
 
 /**
  * config_save_file:
@@ -4332,8 +4394,15 @@ bool config_save_file(const char *path)
          settings->uints.menu_entry_hover_color);
    config_set_hex(conf, "menu_title_color",
          settings->uints.menu_title_color);
+   config_set_hex(conf, "menu_bg_dark_color",
+         settings->uints.menu_bg_dark_color);
+   config_set_hex(conf, "menu_bg_light_color",
+         settings->uints.menu_bg_light_color);
+   config_set_hex(conf, "menu_border_dark_color",
+         settings->uints.menu_border_dark_color);
+   config_set_hex(conf, "menu_border_light_color",
+         settings->uints.menu_border_light_color);
 #endif
-
 
    video_driver_save_settings(conf);
 
@@ -4361,7 +4430,7 @@ bool config_save_file(const char *path)
    for (i = 0; i < MAX_USERS; i++)
       save_keybinds_user(conf, i);
 
-   ret = config_file_write(conf, path);
+   ret = config_file_write(conf, path, true);
    config_file_free(conf);
 
    return ret;
@@ -4607,7 +4676,6 @@ bool config_save_overrides(int override_type)
             config_set_int(conf, cfg, overrides->uints.input_joypad_map[i]);
          }
 
-
          /* blacklist these since they are handled by remaps */
          /* to-do: add setting to control blacklisting
          if (settings->uints.input_libretro_device[i]
@@ -4633,17 +4701,17 @@ bool config_save_overrides(int override_type)
          case OVERRIDE_CORE:
             /* Create a new config file from core_path */
             RARCH_LOG ("[overrides] path %s\n", core_path);
-            ret = config_file_write(conf, core_path);
+            ret = config_file_write(conf, core_path, true);
             break;
          case OVERRIDE_GAME:
             /* Create a new config file from core_path */
             RARCH_LOG ("[overrides] path %s\n", game_path);
-            ret = config_file_write(conf, game_path);
+            ret = config_file_write(conf, game_path, true);
             break;
          case OVERRIDE_CONTENT_DIR:
             /* Create a new config file from content_path */
             RARCH_LOG ("[overrides] path %s\n", content_path);
-            ret = config_file_write(conf, content_path);
+            ret = config_file_write(conf, content_path, true);
             break;
          default:
             break;
@@ -4692,7 +4760,7 @@ bool config_save_overrides(int override_type)
 /* Replaces currently loaded configuration file with
  * another one. Will load a dummy core to flush state
  * properly. */
-bool config_replace(bool config_save_on_exit, char *path)
+bool config_replace(bool config_replace_save_on_exit, char *path)
 {
    content_ctx_info_t content_info = {0};
 
@@ -4704,7 +4772,7 @@ bool config_replace(bool config_save_on_exit, char *path)
    if (string_is_equal(path, path_get(RARCH_PATH_CONFIG)))
       return false;
 
-   if (config_save_on_exit && !path_is_empty(RARCH_PATH_CONFIG))
+   if (config_replace_save_on_exit && !path_is_empty(RARCH_PATH_CONFIG))
       config_save_file(path_get(RARCH_PATH_CONFIG));
 
    path_set(RARCH_PATH_CONFIG, path);

@@ -85,26 +85,26 @@ float osk_dark[16] =  {
 
 /* Menu drivers */
 static const menu_ctx_driver_t *menu_ctx_drivers[] = {
-#if defined(HAVE_OZONE)
-   &menu_ctx_ozone,
-#endif
-#if defined(HAVE_XUI)
-   &menu_ctx_xui,
-#endif
 #if defined(HAVE_MATERIALUI)
    &menu_ctx_mui,
 #endif
 #if defined(HAVE_NUKLEAR)
    &menu_ctx_nuklear,
 #endif
-#if defined(HAVE_XMB)
-   &menu_ctx_xmb,
+#if defined(HAVE_OZONE)
+   &menu_ctx_ozone,
+#endif
+#if defined(HAVE_RGUI)
+   &menu_ctx_rgui,
 #endif
 #if defined(HAVE_STRIPES)
    &menu_ctx_stripes,
 #endif
-#if defined(HAVE_RGUI)
-   &menu_ctx_rgui,
+#if defined(HAVE_XMB)
+   &menu_ctx_xmb,
+#endif
+#if defined(HAVE_XUI)
+   &menu_ctx_xui,
 #endif
 #if defined(HAVE_ZARCH)
    &menu_ctx_zarch,
@@ -148,7 +148,7 @@ static menu_display_ctx_driver_t *menu_display_ctx_drivers[] = {
 #ifdef WIIU
    &menu_display_ctx_wiiu,
 #endif
-#if defined(_WIN32) && !defined(_XBOX)
+#if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
    &menu_display_ctx_gdi,
 #endif
 #ifdef DJGPP
@@ -392,7 +392,7 @@ void menu_display_timedate(menu_display_ctx_datetime_t *datetime)
       case 7: /* Time (hours-minutes), in 12 hour AM-PM designation */
 #if defined(__linux__) && !defined(ANDROID)
          strftime(datetime->s, datetime->len,
-            "%r", localtime(&time_));
+            "%I : %M : %S %p", localtime(&time_));
 #else
          {
             char *local;
@@ -451,7 +451,7 @@ void menu_display_font_free(font_data_t *font)
  * to the menu driver */
 font_data_t *menu_display_font(
       enum application_special_type type,
-      float font_size,
+      float menu_font_size,
       bool is_threaded)
 {
    char fontpath[PATH_MAX_LENGTH];
@@ -464,10 +464,10 @@ font_data_t *menu_display_font(
    fill_pathname_application_special(
          fontpath, sizeof(fontpath), type);
 
-   return menu_display_font_file(fontpath, font_size, is_threaded);
+   return menu_display_font_file(fontpath, menu_font_size, is_threaded);
 }
 
-font_data_t *menu_display_font_file(char* fontpath, float font_size, bool is_threaded)
+font_data_t *menu_display_font_file(char* fontpath, float menu_font_size, bool is_threaded)
 {
    font_data_t *font_data = NULL;
    if (!menu_disp)
@@ -475,7 +475,7 @@ font_data_t *menu_display_font_file(char* fontpath, float font_size, bool is_thr
 
    if (!menu_disp->font_init_first((void**)&font_data,
             video_driver_get_ptr(false),
-            fontpath, font_size, is_threaded))
+            fontpath, menu_font_size, is_threaded))
       return NULL;
 
    return font_data;
@@ -1743,9 +1743,10 @@ static bool menu_init(menu_handle_t *menu_data)
 
       configuration_set_bool(settings,
             settings->bools.menu_show_start_screen, false);
-
+#if !defined(PS2) /* TODO: PS2 IMPROVEMENT */
       if (settings->bools.config_save_on_exit)
          command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+#endif
    }
 
    if (      settings->bools.bundle_assets_extract_enable
@@ -1846,6 +1847,9 @@ static void menu_driver_toggle(bool on)
       if (pause_libretro && !enable_menu_sound)
          command_event(CMD_EVENT_AUDIO_STOP, NULL);
 
+      /*if (settings->bools.audio_enable_menu && settings->bools.audio_enable_menu_bgm)
+         audio_driver_mixer_play_menu_sound_looped(AUDIO_MIXER_SYSTEM_SLOT_BGM);*/
+
       /* Override keyboard callback to redirect to menu instead.
        * We'll use this later for something ... */
 
@@ -1871,6 +1875,9 @@ static void menu_driver_toggle(bool on)
 
       if (pause_libretro && !enable_menu_sound)
          command_event(CMD_EVENT_AUDIO_START, NULL);
+
+      /*if (settings->bools.audio_enable_menu && settings->bools.audio_enable_menu_bgm)
+         audio_driver_mixer_stop_stream(AUDIO_MIXER_SYSTEM_SLOT_BGM);*/
 
       /* Restore libretro keyboard callback. */
       if (key_event && frontend_key_event)
@@ -1979,6 +1986,8 @@ bool menu_driver_iterate(menu_ctx_iterate_t *iterate)
          return false;
       }
 
+      menu_navigation_set_selection(0);
+
       return true;
    }
 
@@ -2069,8 +2078,9 @@ static bool menu_driver_init_internal(bool video_is_threaded)
    if (menu_driver_data)
       return true;
 
-   menu_driver_data               = (menu_handle_t*)
-      menu_driver_ctx->init(&menu_userdata, video_is_threaded);
+   if (menu_driver_ctx->init)
+      menu_driver_data               = (menu_handle_t*)
+         menu_driver_ctx->init(&menu_userdata, video_is_threaded);
 
    if (!menu_driver_data || !menu_init(menu_driver_data))
       goto error;
@@ -2099,9 +2109,15 @@ static bool menu_driver_context_reset(bool video_is_threaded)
 
 bool menu_driver_init(bool video_is_threaded)
 {
+   menu_animation_init();
    if (menu_driver_init_internal(video_is_threaded))
       return menu_driver_context_reset(video_is_threaded);
    return false;
+}
+
+void menu_driver_free(void)
+{
+   menu_animation_free();
 }
 
 void menu_driver_navigation_set(bool scroll)
@@ -2653,4 +2669,58 @@ void hex32_to_rgba_normalized(uint32_t hex, float* rgba, float alpha)
    rgba[1] = rgba[5] = rgba[9]  = rgba[13] = ((hex >> 8 ) & 0xFF) * (1.0f / 255.0f); /* g */
    rgba[2] = rgba[6] = rgba[10] = rgba[14] = ((hex >> 0 ) & 0xFF) * (1.0f / 255.0f); /* b */
    rgba[3] = rgba[7] = rgba[11] = rgba[15] = alpha;
+}
+
+void menu_subsystem_populate(const struct retro_subsystem_info* subsystem, menu_displaylist_info_t *info)
+{
+   unsigned i = 0;
+   if (subsystem && subsystem_current_count > 0)
+   {
+      for (i = 0; i < subsystem_current_count; i++, subsystem++)
+      {
+         char s[PATH_MAX_LENGTH];
+         if (content_get_subsystem() == i)
+         {
+            if (content_get_subsystem_rom_id() < subsystem->num_roms)
+            {
+               snprintf(s, sizeof(s),
+                  "Load %s %s",
+                  subsystem->desc,
+                  i == content_get_subsystem()
+                  ? "\u2605" : " ");
+               menu_entries_append_enum(info->list,
+                  s,
+                  msg_hash_to_str(MENU_ENUM_LABEL_SUBSYSTEM_ADD),
+                  MENU_ENUM_LABEL_SUBSYSTEM_ADD,
+                  MENU_SETTINGS_SUBSYSTEM_ADD + i, 0, 0);
+            }
+            else
+            {
+               snprintf(s, sizeof(s),
+                  "Start %s %s",
+                  subsystem->desc,
+                  i == content_get_subsystem()
+                  ? "\u2605" : " ");
+               menu_entries_append_enum(info->list,
+                  s,
+                  msg_hash_to_str(MENU_ENUM_LABEL_SUBSYSTEM_LOAD),
+                  MENU_ENUM_LABEL_SUBSYSTEM_LOAD,
+                  MENU_SETTINGS_SUBSYSTEM_LOAD, 0, 0);
+            }
+         }
+         else
+         {
+            snprintf(s, sizeof(s),
+               "Load %s %s",
+               subsystem->desc,
+               i == content_get_subsystem()
+               ? "\u2605" : " ");
+            menu_entries_append_enum(info->list,
+               s,
+               msg_hash_to_str(MENU_ENUM_LABEL_SUBSYSTEM_ADD),
+               MENU_ENUM_LABEL_SUBSYSTEM_ADD,
+               MENU_SETTINGS_SUBSYSTEM_ADD + i, 0, 0);
+         }
+      }
+   }
 }

@@ -108,9 +108,17 @@ static dylib_t lib_handle;
 #define SYMBOL_VIDEOPROCESSOR(x) current_core->x = libretro_videoprocessor_##x
 #endif
 
+#ifdef HAVE_EASTEREGG
+#define SYMBOL_GONG(x) current_core->x = libretro_gong_##x
+#endif
+
 static bool ignore_environment_cb   = false;
 static bool core_set_shared_context = false;
 static bool *load_no_content_hook   = NULL;
+
+struct retro_subsystem_info subsystem_data[SUBSYSTEM_MAX_SUBSYSTEMS];
+struct retro_subsystem_rom_info subsystem_data_roms[SUBSYSTEM_MAX_SUBSYSTEMS][SUBSYSTEM_MAX_SUBSYSTEM_ROMS];
+unsigned subsystem_current_count;
 
 const struct retro_subsystem_info *libretro_find_subsystem_info(
       const struct retro_subsystem_info *info, unsigned num_info,
@@ -173,7 +181,6 @@ void libretro_free_system_info(struct retro_system_info *info)
    memset(info, 0, sizeof(*info));
 }
 
-
 static bool environ_cb_get_system_info(unsigned cmd, void *data)
 {
    rarch_system_info_t *system  = runloop_get_system_info();
@@ -184,11 +191,10 @@ static bool environ_cb_get_system_info(unsigned cmd, void *data)
          break;
       case RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO:
       {
-         unsigned i, j;
-         unsigned size = i;
+         unsigned i, j, size;
          const struct retro_subsystem_info *info =
             (const struct retro_subsystem_info*)data;
-         subsystem_size = 0;
+         subsystem_current_count = 0;
          RARCH_LOG("Environ SET_SUBSYSTEM_INFO.\n");
 
          for (i = 0; info[i].ident; i++)
@@ -207,18 +213,24 @@ static bool environ_cb_get_system_info(unsigned cmd, void *data)
          }
 
          RARCH_LOG("Subsystems: %d\n", i);
-	 size = i;
+         size = i;
+
+         if (size > SUBSYSTEM_MAX_SUBSYSTEMS)
+            RARCH_WARN("Subsystems exceed subsystem max, clamping to %d\n", SUBSYSTEM_MAX_SUBSYSTEMS);
 
          if (system)
          {
-            for (i = 0; i < size; i++)
+            for (i = 0; i < size && i < SUBSYSTEM_MAX_SUBSYSTEMS; i++)
             {
                subsystem_data[i].desc = strdup(info[i].desc);
                subsystem_data[i].ident = strdup(info[i].ident);
                subsystem_data[i].id = info[i].id;
                subsystem_data[i].num_roms = info[i].num_roms;
 
-               for (j = 0; j < subsystem_data[i].num_roms; j++)
+               if (subsystem_data[i].num_roms > SUBSYSTEM_MAX_SUBSYSTEM_ROMS)
+                  RARCH_WARN("Subsystems exceed subsystem max roms, clamping to %d\n", SUBSYSTEM_MAX_SUBSYSTEM_ROMS);
+
+               for (j = 0; j < subsystem_data[i].num_roms && j < SUBSYSTEM_MAX_SUBSYSTEM_ROMS; j++)
                {
                   subsystem_data_roms[i][j].desc = strdup(info[i].roms[j].desc);
                   subsystem_data_roms[i][j].valid_extensions = strdup(info[i].roms[j].valid_extensions);
@@ -229,15 +241,18 @@ static bool environ_cb_get_system_info(unsigned cmd, void *data)
                subsystem_data[i].roms = subsystem_data_roms[i];
             }
 
-            for (i = 0; i < size; i++)
+            subsystem_current_count = size <= SUBSYSTEM_MAX_SUBSYSTEMS ? size : SUBSYSTEM_MAX_SUBSYSTEMS;
+#if 0
+            RARCH_LOG("Subsystems: %d\n", subsystem_current_count);
+
+            for (i = 0; i < subsystem_current_count; i++)
             {
-#if 1
                RARCH_LOG("Subsystem ID: %d\n", i);
                RARCH_LOG("Special game type: %s\n", subsystem_data[i].desc);
                RARCH_LOG("  Ident: %s\n", subsystem_data[i].ident);
                RARCH_LOG("  ID: %u\n", subsystem_data[i].id);
                RARCH_LOG("  Content:\n");
-#endif
+
                for (j = 0; j < subsystem_data[i].num_roms; j++)
                {
                   RARCH_LOG("    %s (%s)\n",
@@ -245,9 +260,7 @@ static bool environ_cb_get_system_info(unsigned cmd, void *data)
                         "required" : "optional");
                }
             }
-            RARCH_LOG("Subsystems: %d\n", subsystem_size);
-            subsystem_size = size;
-            RARCH_LOG("Subsystems: %d\n", subsystem_size);
+#endif
          }
          break;
       }
@@ -297,6 +310,9 @@ static void libretro_get_environment_info(void (*func)(retro_environment_t),
 
 static bool load_dynamic_core(void)
 {
+#if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
+   /* Can't lookup symbols in itself on UWP */
+#else
    function_t sym       = dylib_proc(NULL, "retro_init");
 
    if (sym)
@@ -310,6 +326,7 @@ static bool load_dynamic_core(void)
       RARCH_ERR("Proceeding could cause a crash. Aborting ...\n");
       retroarch_fail(1, "init_libretro_sym()");
    }
+#endif
 
    if (string_is_empty(path_get(RARCH_PATH_CORE)))
    {
@@ -477,8 +494,9 @@ bool libretro_get_system_info(const char *path,
  * Setup libretro callback symbols. Returns true on success,
  * or false if symbols could not be loaded.
  **/
-bool init_libretro_sym_custom(enum rarch_core_type type, struct retro_core_t *current_core, const char *lib_path, dylib_t *lib_handle_p)
+bool init_libretro_sym_custom(enum rarch_core_type type, struct retro_core_t *current_core, const char *lib_path, void *_lib_handle_p)
 {
+   dylib_t *lib_handle_p = (dylib_t*)_lib_handle_p;
 #ifdef HAVE_DYNAMIC
    /* the library handle for use with the SYMBOL macro */
    dylib_t lib_handle_local;
@@ -764,6 +782,43 @@ bool init_libretro_sym_custom(enum rarch_core_type type, struct retro_core_t *cu
          SYMBOL_VIDEOPROCESSOR(retro_get_region);
          SYMBOL_VIDEOPROCESSOR(retro_get_memory_data);
          SYMBOL_VIDEOPROCESSOR(retro_get_memory_size);
+#endif
+         break;
+      case CORE_TYPE_GONG:
+#ifdef HAVE_EASTEREGG
+         SYMBOL_GONG(retro_init);
+         SYMBOL_GONG(retro_deinit);
+
+         SYMBOL_GONG(retro_api_version);
+         SYMBOL_GONG(retro_get_system_info);
+         SYMBOL_GONG(retro_get_system_av_info);
+
+         SYMBOL_GONG(retro_set_environment);
+         SYMBOL_GONG(retro_set_video_refresh);
+         SYMBOL_GONG(retro_set_audio_sample);
+         SYMBOL_GONG(retro_set_audio_sample_batch);
+         SYMBOL_GONG(retro_set_input_poll);
+         SYMBOL_GONG(retro_set_input_state);
+
+         SYMBOL_GONG(retro_set_controller_port_device);
+
+         SYMBOL_GONG(retro_reset);
+         SYMBOL_GONG(retro_run);
+
+         SYMBOL_GONG(retro_serialize_size);
+         SYMBOL_GONG(retro_serialize);
+         SYMBOL_GONG(retro_unserialize);
+
+         SYMBOL_GONG(retro_cheat_reset);
+         SYMBOL_GONG(retro_cheat_set);
+
+         SYMBOL_GONG(retro_load_game);
+         SYMBOL_GONG(retro_load_game_special);
+
+         SYMBOL_GONG(retro_unload_game);
+         SYMBOL_GONG(retro_get_region);
+         SYMBOL_GONG(retro_get_memory_data);
+         SYMBOL_GONG(retro_get_memory_size);
 #endif
          break;
    }
@@ -1459,9 +1514,8 @@ bool rarch_environment_cb(unsigned cmd, void *data)
          {
             memcpy(hwr,
                   cb, offsetof(struct retro_hw_render_callback, stencil));
-            memset(hwr + offsetof(struct retro_hw_render_callback, stencil),
-                  0, sizeof(*cb) - offsetof(struct retro_hw_render_callback, stencil));
-            
+            memset((uint8_t*)hwr + offsetof(struct retro_hw_render_callback, stencil),
+               0, sizeof(*cb) - offsetof(struct retro_hw_render_callback, stencil));
          }
          else
             memcpy(hwr, cb, sizeof(*cb));
@@ -1872,9 +1926,10 @@ bool rarch_environment_cb(unsigned cmd, void *data)
  
       case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:
       {
-         const uint32_t supported_vfs_version = 1;
+         const uint32_t supported_vfs_version = 3;
          static struct retro_vfs_interface vfs_iface =
          {
+            /* VFS API v1 */
             retro_vfs_file_get_path_impl,
             retro_vfs_file_open_impl,
             retro_vfs_file_close_impl,
@@ -1884,14 +1939,32 @@ bool rarch_environment_cb(unsigned cmd, void *data)
             retro_vfs_file_read_impl,
             retro_vfs_file_write_impl,
             retro_vfs_file_flush_impl,
-            retro_vfs_file_remove_impl
+            retro_vfs_file_remove_impl,
+            retro_vfs_file_rename_impl,
+            /* VFS API v2 */
+            retro_vfs_file_truncate_impl,
+            /* VFS API v3 */
+            retro_vfs_stat_impl,
+            retro_vfs_mkdir_impl,
+            retro_vfs_opendir_impl,
+            retro_vfs_readdir_impl,
+            retro_vfs_dirent_get_name_impl,
+            retro_vfs_dirent_is_dir_impl,
+            retro_vfs_closedir_impl
          };
 
          struct retro_vfs_interface_info *vfs_iface_info = (struct retro_vfs_interface_info *) data;
          if (vfs_iface_info->required_interface_version <= supported_vfs_version)
          {
+            RARCH_LOG("Core requested VFS version >= v%d, providing v%d\n", vfs_iface_info->required_interface_version, supported_vfs_version);
             vfs_iface_info->required_interface_version = supported_vfs_version;
             vfs_iface_info->iface                      = &vfs_iface;
+            system->supports_vfs = true;
+         }
+         else
+         {
+            RARCH_WARN("Core requested VFS version v%d which is higher than what we support (v%d)\n", vfs_iface_info->required_interface_version, supported_vfs_version);
+            return false;
          }
 
          break;

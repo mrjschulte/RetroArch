@@ -2,7 +2,7 @@
  *  Copyright (C) 2010-2014 - Hans-Kristian Arntzen
  *  Copyright (C) 2011-2016 - Daniel De Matteis
  *  Copyright (C) 2014-2016 - Jean-André Santoni
- *  Copyright (C) 2016 - Brad Parker
+ *  Copyright (C) 2016-2019 - Brad Parker
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -110,6 +110,10 @@ typedef struct settings
       /* Audio */
       bool audio_enable;
       bool audio_enable_menu;
+      bool audio_enable_menu_ok;
+      bool audio_enable_menu_cancel;
+      bool audio_enable_menu_notice;
+      bool audio_enable_menu_bgm;
       bool audio_sync;
       bool audio_rate_control;
       bool audio_wasapi_exclusive_mode;
@@ -184,6 +188,9 @@ typedef struct settings
       bool quick_menu_show_save_load_state;
       bool quick_menu_show_undo_save_load_state;
       bool quick_menu_show_add_to_favorites;
+      bool quick_menu_show_start_recording;
+      bool quick_menu_show_start_streaming;
+      bool quick_menu_show_reset_core_association;
       bool quick_menu_show_options;
       bool quick_menu_show_controls;
       bool quick_menu_show_cheats;
@@ -297,6 +304,7 @@ typedef struct settings
       bool video_window_save_positions;
 
       bool sustained_performance_mode;
+      bool playlist_use_old_format;
    } bools;
 
    struct
@@ -399,10 +407,16 @@ typedef struct settings
       unsigned menu_timedate_style;
       unsigned menu_thumbnails;
       unsigned menu_left_thumbnails;
+      unsigned menu_rgui_thumbnail_downscaler;
       unsigned menu_dpi_override_value;
       unsigned menu_entry_normal_color;
       unsigned menu_entry_hover_color;
       unsigned menu_title_color;
+      unsigned menu_bg_dark_color;
+      unsigned menu_bg_light_color;
+      unsigned menu_border_dark_color;
+      unsigned menu_border_light_color;
+      unsigned menu_rgui_color_theme;
       unsigned menu_xmb_layout;
       unsigned menu_xmb_shader_pipeline;
       unsigned menu_xmb_scale_factor;

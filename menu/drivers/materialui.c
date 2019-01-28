@@ -608,7 +608,6 @@ static void materialui_compute_entries_box(materialui_handle_t* mui, int width)
       menu_entry_init(&entry);
       menu_entry_get(&entry, 0, i, NULL, true);
 
-
       sublabel_str = menu_entry_get_sublabel(&entry);
       menu_entry_free(&entry);
 
@@ -997,7 +996,6 @@ static void materialui_render_menu_list(
       free(rich_label);
    }
 }
-
 
 static size_t materialui_list_get_size(void *data, enum menu_list_type type)
 {
@@ -2057,6 +2055,12 @@ static int materialui_list_push(void *data, void *userdata,
                menu_displaylist_setting(&entry);
             }
 
+            if (system->load_no_content)
+            {
+               entry.enum_idx      = MENU_ENUM_LABEL_START_CORE;
+               menu_displaylist_setting(&entry);
+            }
+
 #ifndef HAVE_DYNAMIC
             if (frontend_driver_has_fork())
 #endif
@@ -2066,12 +2070,6 @@ static int materialui_list_push(void *data, void *userdata,
                   entry.enum_idx      = MENU_ENUM_LABEL_CORE_LIST;
                   menu_displaylist_setting(&entry);
                }
-            }
-
-            if (system->load_no_content)
-            {
-               entry.enum_idx      = MENU_ENUM_LABEL_START_CORE;
-               menu_displaylist_setting(&entry);
             }
 
             if (settings->bools.menu_show_load_content)
@@ -2092,7 +2090,6 @@ static int materialui_list_push(void *data, void *userdata,
             menu_displaylist_setting(&entry);
 #else
             {
-               settings_t *settings      = config_get_ptr();
                if (settings->bools.menu_show_online_updater)
                {
                   entry.enum_idx      = MENU_ENUM_LABEL_ONLINE_UPDATER;
@@ -2204,7 +2201,6 @@ static int materialui_pointer_down(void *userdata,
             )
             menu_navigation_set_selection(ii);
       }
-
 
    }
 
@@ -2352,7 +2348,6 @@ static void materialui_list_insert(void *userdata,
             node->texture_switch2_index = MUI_TEXTURE_DATABASE;
             node->texture_switch2_set   = true;
             break;
-         case 32: /* TODO: Need to find out what this is */
          case FILE_TYPE_RDB_ENTRY:
             node->texture_switch2_index = MUI_TEXTURE_SETTINGS;
             node->texture_switch2_set   = true;

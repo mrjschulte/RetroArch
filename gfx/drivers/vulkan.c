@@ -645,6 +645,7 @@ static void vulkan_deinit_descriptor_pool(vk_t *vk)
 static void vulkan_init_textures(vk_t *vk)
 {
    unsigned i;
+   const uint32_t zero = 0;
    vulkan_init_samplers(vk);
 
    if (!vk->hw.enable)
@@ -665,6 +666,10 @@ static void vulkan_init_textures(vk_t *vk)
                   NULL, NULL, VULKAN_TEXTURE_DYNAMIC);
       }
    }
+
+   vk->default_texture = vulkan_create_texture(vk, NULL,
+         1, 1, VK_FORMAT_B8G8R8A8_UNORM,
+         &zero, NULL, VULKAN_TEXTURE_STATIC);
 }
 
 static void vulkan_deinit_textures(vk_t *vk)
@@ -683,6 +688,9 @@ static void vulkan_deinit_textures(vk_t *vk)
          vulkan_destroy_texture(
                vk->context->device, &vk->swapchain[i].texture_optimal);
    }
+
+   if (vk->default_texture.memory != VK_NULL_HANDLE)
+      vulkan_destroy_texture(vk->context->device, &vk->default_texture);
 }
 
 static void vulkan_deinit_command_buffers(vk_t *vk)
@@ -993,12 +1001,14 @@ static void vulkan_set_image(void *handle,
 
    if (num_semaphores > 0)
    {
-      vk->hw.wait_dst_stages = (VkPipelineStageFlags*)
+      VkPipelineStageFlags *stage_flags = (VkPipelineStageFlags*)
          realloc(vk->hw.wait_dst_stages,
             sizeof(VkPipelineStageFlags) * vk->hw.num_semaphores);
 
       /* If this fails, we're screwed anyways. */
-      retro_assert(vk->hw.wait_dst_stages);
+      retro_assert(stage_flags);
+
+      vk->hw.wait_dst_stages = stage_flags;
 
       for (i = 0; i < vk->hw.num_semaphores; i++)
          vk->hw.wait_dst_stages[i] = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -1022,11 +1032,14 @@ static void vulkan_set_command_buffers(void *handle, uint32_t num_cmd,
    unsigned required_capacity = num_cmd + 1;
    if (required_capacity > vk->hw.capacity_cmd)
    {
-      vk->hw.cmd = (VkCommandBuffer*)realloc(vk->hw.cmd,
+      VkCommandBuffer *hw_cmd = (VkCommandBuffer*)
+         realloc(vk->hw.cmd,
             sizeof(VkCommandBuffer) * required_capacity);
 
       /* If this fails, we're just screwed. */
-      retro_assert(vk->hw.cmd);
+      retro_assert(hw_cmd);
+
+      vk->hw.cmd          = hw_cmd;
       vk->hw.capacity_cmd = required_capacity;
    }
 
@@ -1732,28 +1745,43 @@ static bool vulkan_frame(void *data, const void *frame,
       if (vk->hw.enable)
       {
          /* Does this make that this can happen at all? */
-         if (!vk->hw.image)
+         if (vk->hw.image)
          {
-            RARCH_ERR("[Vulkan]: HW image is not set. Buggy core?\n");
-            return false;
-         }
+            input.image        = vk->hw.image->create_info.image;
+            input.view         = vk->hw.image->image_view;
+            input.layout       = vk->hw.image->image_layout;
 
-         input.image        = vk->hw.image->create_info.image;
-         input.view         = vk->hw.image->image_view;
-         input.layout       = vk->hw.image->image_layout;
+            /* The format can change on a whim. */
+            input.format       = vk->hw.image->create_info.format;
 
-         /* The format can change on a whim. */
-         input.format       = vk->hw.image->create_info.format;
+            if (frame)
+            {
+               input.width     = frame_width;
+               input.height    = frame_height;
+            }
+            else
+            {
+               input.width     = vk->hw.last_width;
+               input.height    = vk->hw.last_height;
+            }
 
-         if (frame)
-         {
-            input.width     = frame_width;
-            input.height    = frame_height;
+            input.image        = vk->hw.image->create_info.image;
+            input.view         = vk->hw.image->image_view;
+            input.layout       = vk->hw.image->image_layout;
+
+            /* The format can change on a whim. */
+            input.format       = vk->hw.image->create_info.format;
          }
          else
          {
-            input.width     = vk->hw.last_width;
-            input.height    = vk->hw.last_height;
+            /* Fall back to the default, black texture.
+             * This can happen if we restart the video driver while in the menu. */
+            input.image  = vk->default_texture.image;
+            input.view   = vk->default_texture.view;
+            input.layout = vk->default_texture.layout;
+            input.format = vk->default_texture.format;
+            input.width  = vk->default_texture.width;
+            input.height = vk->default_texture.height;
          }
 
          vk->hw.last_width  = input.width;
@@ -2717,4 +2745,3 @@ video_driver_t video_vulkan = {
    vulkan_get_poke_interface,
    NULL,                         /* vulkan_wrap_type_to_enum */
 };
-

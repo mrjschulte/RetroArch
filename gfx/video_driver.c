@@ -119,7 +119,6 @@
 #define video_driver_context_unlock()  ((void)0)
 #endif
 
-
 typedef struct video_pixel_scaler
 {
    struct scaler_ctx *scaler;
@@ -147,7 +146,6 @@ static bool                video_driver_state_out_rgb32      = false;
 static bool                video_driver_crt_switching_active = false;
 
 static struct retro_system_av_info video_driver_av_info;
-
 
 static enum retro_pixel_format video_driver_pix_fmt      = RETRO_PIXEL_FORMAT_0RGB1555;
 
@@ -274,14 +272,14 @@ static const video_driver_t *video_drivers[] = {
 #ifdef XENON
    &video_xenon360,
 #endif
-#if defined(HAVE_D3D10)
-   &video_d3d10,
+#if defined(HAVE_D3D12)
+   &video_d3d12,
 #endif
 #if defined(HAVE_D3D11)
    &video_d3d11,
 #endif
-#if defined(HAVE_D3D12)
-   &video_d3d12,
+#if defined(HAVE_D3D10)
+   &video_d3d10,
 #endif
 #if defined(HAVE_D3D9)
    &video_d3d9,
@@ -340,7 +338,7 @@ static const video_driver_t *video_drivers[] = {
 #ifdef HAVE_XSHM
    &video_xshm,
 #endif
-#if defined(_WIN32) && !defined(_XBOX)
+#if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
    &video_gdi,
 #endif
 #ifdef DJGPP
@@ -357,6 +355,9 @@ static const video_driver_t *video_drivers[] = {
 };
 
 static const gfx_ctx_driver_t *gfx_ctx_drivers[] = {
+#if defined(ORBIS)
+   &orbis_ctx,
+#endif
 #if defined(HAVE_LIBNX) && defined(HAVE_OPENGL)
    &switch_ctx,
 #endif
@@ -416,7 +417,7 @@ static const gfx_ctx_driver_t *gfx_ctx_drivers[] = {
 #if defined(HAVE_VULKAN) && defined(HAVE_VULKAN_DISPLAY)
    &gfx_ctx_khr_display,
 #endif
-#if defined(_WIN32) && !defined(_XBOX)
+#if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
    &gfx_ctx_gdi,
 #endif
 #ifdef HAVE_SIXEL
@@ -951,7 +952,6 @@ static bool video_driver_init_internal(bool *video_is_threaded)
    if (!string_is_empty(settings->paths.path_softfilter_plugin))
       video_driver_init_filter(video_driver_pix_fmt);
 
-
    max_dim   = MAX(geom->max_width, geom->max_height);
    scale     = next_pow2(max_dim) / RARCH_SCALE_BASE;
    scale     = MAX(scale, 1);
@@ -1422,6 +1422,8 @@ bool video_driver_cached_frame(void)
 {
    void *recording  = recording_driver_get_data_ptr();
 
+   recording_driver_lock();
+
    /* Cannot allow recording when pushing duped frames. */
    recording_data   = NULL;
 
@@ -1432,6 +1434,8 @@ bool video_driver_cached_frame(void)
          frame_cache_height, frame_cache_pitch);
 
    recording_data   = recording;
+
+   recording_driver_unlock();
 
    return true;
 }
@@ -2022,7 +2026,6 @@ bool video_driver_read_viewport(uint8_t *buffer, bool is_idle)
    return false;
 }
 
-
 bool video_driver_frame_filter_alive(void)
 {
    return !!video_driver_state_filter;
@@ -2055,8 +2058,13 @@ void video_driver_load_settings(config_file_t *conf)
    if (!conf)
       return;
 
+#ifdef _XBOX
    CONFIG_GET_BOOL_BASE(conf, global,
          console.screen.gamma_correction, "gamma_correction");
+#else
+   CONFIG_GET_INT_BASE(conf, global,
+         console.screen.gamma_correction, "gamma_correction");
+#endif
 
    if (config_get_bool(conf, "flicker_filter_enable",
          &tmp_bool))
@@ -2083,8 +2091,13 @@ void video_driver_save_settings(config_file_t *conf)
    if (!conf)
       return;
 
+#ifdef _XBOX
    config_set_bool(conf, "gamma_correction",
          global->console.screen.gamma_correction);
+#else
+   config_set_int(conf, "gamma_correction",
+         global->console.screen.gamma_correction);
+#endif
    config_set_bool(conf, "flicker_filter_enable",
          global->console.flickerfilter_enable);
    config_set_bool(conf, "soft_filter_enable",
@@ -2421,7 +2434,6 @@ void video_driver_frame(const void *data, unsigned width,
          pitch               = video_driver_scaler_ptr->scaler->out_stride;
       }
    }
-
 
    if (data)
       frame_cache_data = data;
@@ -3147,7 +3159,6 @@ void video_context_driver_make_current(bool release)
       current_video_context.make_current(release);
 }
 
-
 bool video_context_driver_translate_aspect(gfx_ctx_aspect_t *aspect)
 {
    if (!video_context_data || !aspect)
@@ -3344,8 +3355,6 @@ bool video_driver_get_all_flags(gfx_ctx_flags_t *flags, enum display_flags flag)
 
    return false;
 }
-
-
 
 bool video_context_driver_set_flags(gfx_ctx_flags_t *flags)
 {
